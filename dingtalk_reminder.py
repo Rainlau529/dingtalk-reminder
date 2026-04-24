@@ -155,7 +155,7 @@ def build_dingtalk_message(todos, base_url="https://dingtalk-reminder.onrender.c
             if members:
                 done_count = sum(1 for m in members if m.get("done", False))
                 total_count = len(members)
-                content += f"    - 进度：`[{progress_bar}]` **{progress}%** ({done_count}/{total_count}人完成)\n"
+                content += f"    - 进度：**{progress}%** ▓▓▓▓▓▓░░░░ ({done_count}/{total_count}完成)\n"
 
                 # 添加可点击的负责人列表
                 content += "    - 👥 负责人："
