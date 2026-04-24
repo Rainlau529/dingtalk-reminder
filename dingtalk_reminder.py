@@ -212,11 +212,6 @@ HTML_TEMPLATE = '''
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; padding: 20px; }
         .container { max-width: 800px; margin: 0 auto; }
         h1 { text-align: center; color: #333; margin-bottom: 20px; }
-        .group-nav { display: flex; gap: 10px; justify-content: center; margin-bottom: 20px; }
-        .group-btn { padding: 8px 20px; background: white; color: #667eea; border: 2px solid #667eea; border-radius: 20px; text-decoration: none; font-size: 14px; }
-        .group-btn.active { background: #667eea; color: white; }
-        .group-btn:hover { background: #f0f5ff; }
-        .group-btn.active:hover { background: #5a6fd6; }
         .card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
         .section-title { font-size: 14px; color: #666; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #eee; }
         .todo-item { padding: 15px 0; border-bottom: 1px solid #f5f5f5; }
@@ -280,13 +275,7 @@ HTML_TEMPLATE = '''
 </head>
 <body>
     <div class="container">
-        <h1>📋 群{{ group_id }}待办备忘录</h1>
-
-        <div class="group-nav">
-            <a href="/group/1" class="group-btn {{ 'active' if group_id == 1 else '' }}">群1</a>
-            <a href="/group/2" class="group-btn {{ 'active' if group_id == 2 else '' }}">群2</a>
-            <a href="/group/3" class="group-btn {{ 'active' if group_id == 3 else '' }}">群3</a>
-        </div>
+        <h1>📋 待办备忘录</h1>
 
         {% if message %}
         <div class="message {{ message_type }}">{{ message }}</div>
