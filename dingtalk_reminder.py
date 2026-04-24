@@ -96,12 +96,15 @@ def build_progress_bar(progress, width=10):
     return "█" * filled + "░" * empty
 
 
-def build_dingtalk_message(todos):
-    """构建钉钉消息"""
+def build_dingtalk_message(todos, base_url="https://dingtalk-reminder.onrender.com"):
+    """构建钉钉消息（Markdown格式，支持点击链接标记完成）"""
     if not todos:
         return {
-            "msgtype": "text",
-            "text": {"content": "📋 汽二待办备忘录：\n暂无待办事项！"}
+            "msgtype": "markdown",
+            "markdown": {
+                "title": "汽二待办备忘录",
+                "text": "## 📋 汽二待办备忘录\n\n暂无待办事项！"
+            }
         }
 
     undone = [t for t in todos if not t.get("done", False)]
@@ -109,29 +112,30 @@ def build_dingtalk_message(todos):
     priority_order = {"high": 0, "important": 1, "normal": 2}
     undone.sort(key=lambda x: (priority_order.get(x.get("priority", "normal"), 2), x.get("deadline", "")))
 
-    content = "📋 汽二待办备忘录\n\n"
+    content = "## 📋 汽二待办备忘录\n\n"
 
     # 截止日期提醒
     urgent_items = [t for t in undone if get_deadline_status(t.get("deadline", "")) in ["overdue", "today", "tomorrow", "soon"]]
     if urgent_items:
-        content += "⏰ 截止提醒\n"
+        content += "### ⏰ 截止提醒\n"
         for t in urgent_items:
             status = get_deadline_status(t.get("deadline", ""))
             deadline = t.get("deadline", "无截止")
             if status == "overdue":
-                content += f"🚨 已过期！{deadline} {t['content']}\n"
+                content += f"- 🚨 **已过期！** {deadline} {t['content']}\n"
             elif status == "today":
-                content += f"🚨 今天截止！{t['content']}\n"
+                content += f"- 🚨 **今天截止！** {t['content']}\n"
             elif status == "tomorrow":
-                content += f"⚠️ 明天截止：{t['content']}\n"
+                content += f"- ⚠️ **明天截止：** {t['content']}\n"
             elif status == "soon":
-                content += f"⚠️ {deadline} 截止：{t['content']}\n"
+                content += f"- ⚠️ **{deadline} 截止：** {t['content']}\n"
         content += "\n"
 
-    # 待办事项（带进度）
+    # 待办事项（带进度和可点击负责人）
     if undone:
-        content += "📌 待办事项\n"
+        content += "### 📌 待办事项\n"
         for t in undone:
+            todo_id = t["id"]
             priority = t.get("priority", "normal")
             deadline = t.get("deadline", "")
             members = t.get("members", [])
@@ -139,30 +143,46 @@ def build_dingtalk_message(todos):
             progress_bar = build_progress_bar(progress)
 
             priority_icon = {"high": "🚨", "important": "📌", "normal": "📝"}.get(priority, "📝")
-            priority_tag = {"high": "[紧急]", "important": "[重要]", "normal": ""}.get(priority, "")
+            priority_tag = {"high": "**[紧急]**", "important": "**[重要]**", "normal": ""}.get(priority, "")
 
-            # 负责人状态
+            # 构建待办项标题
+            if priority_tag:
+                content += f"- {priority_icon} {priority_tag} {deadline} {t['content']}\n"
+            else:
+                content += f"- {priority_icon} {deadline} {t['content']}\n"
+
+            # 添加进度条
             if members:
                 done_count = sum(1 for m in members if m.get("done", False))
                 total_count = len(members)
-                member_status = f"{done_count}/{total_count}人完成"
-            else:
-                member_status = ""
+                content += f"    - 进度：`[{progress_bar}]` **{progress}%** ({done_count}/{total_count}人完成)\n"
 
-            line = f"{priority_icon} {priority_tag}{deadline} {t['content']}\n"
-            if members:
-                line += f"   进度：[{progress_bar}] {progress}% {member_status}\n"
-            content += line
+                # 添加可点击的负责人列表
+                content += "    - 👥 负责人："
+                member_links = []
+                for i, member in enumerate(members):
+                    member_url = f"{base_url}/member/{todo_id}/{i}"
+                    if member.get("done", False):
+                        member_links.append(f"`☑️ {member['name']}`")
+                    else:
+                        member_links.append(f"[**☐ {member['name']}**]({member_url})")
+                content += " ".join(member_links) + "\n"
 
         content += "\n"
 
     # 已完成
     if done:
-        content += "✅ 已完成\n"
+        content += "### ✅ 已完成\n"
         for t in done:
-            content += f"☑️ {t.get('deadline', '')} {t['content']}\n"
+            content += f"- ~~{t.get('deadline', '')} {t['content']}~~\n"
 
-    return {"msgtype": "text", "text": {"content": content}}
+    return {
+        "msgtype": "markdown",
+        "markdown": {
+            "title": "汽二待办备忘录",
+            "text": content
+        }
+    }
 
 
 def send_to_dingtalk(message):
