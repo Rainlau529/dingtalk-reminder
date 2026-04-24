@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-钉钉待办备忘录 v3 - 带进度追踪
-功能：
-1. 标记已完成
-2. 优先级标记（紧急/重要/普通）
-3. 截止日期提醒
-4. 负责人进度追踪（百分比进度条）
+钉钉待办备忘录 v5 - 多群独立管理
+每个群有独立的待办列表，通过URL区分：
+- /group/1  群1
+- /group/2  群2
+- /group/3  群3
 """
 
 from flask import Flask, request, jsonify, render_template_string, redirect
@@ -17,27 +16,35 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# 钉钉 Webhook URL
-DINGTALK_WEBHOOK = os.environ.get("DINGTALK_WEBHOOK", "")
+# 获取群ID（默认为1）
+def get_group_id():
+    return request.view_args.get("group_id", 1) if request.view_args else 1
 
-# 数据文件路径
-TODO_FILE = os.path.join(os.path.dirname(__file__), "todo.json")
+# 获取某群的数据文件路径
+def get_todo_file(group_id):
+    return os.path.join(os.path.dirname(__file__), f"todo_g{group_id}.json")
+
+# 获取某群的 Webhook
+def get_webhook(group_id):
+    return os.environ.get(f"DINGTALK_WEBHOOK_G{group_id}", "")
 
 
-def read_todos():
-    """读取待办列表"""
-    if not os.path.exists(TODO_FILE):
+def read_todos(group_id):
+    """读取某群的待办列表"""
+    todo_file = get_todo_file(group_id)
+    if not os.path.exists(todo_file):
         return []
     try:
-        with open(TODO_FILE, "r", encoding="utf-8") as f:
+        with open(todo_file, "r", encoding="utf-8") as f:
             return json.load(f)
     except:
         return []
 
 
-def write_todos(todos):
-    """写入待办列表"""
-    with open(TODO_FILE, "w", encoding="utf-8") as f:
+def write_todos(group_id, todos):
+    """写入某群的待办列表"""
+    todo_file = get_todo_file(group_id)
+    with open(todo_file, "w", encoding="utf-8") as f:
         json.dump(todos, f, ensure_ascii=False, indent=2)
 
 
@@ -93,17 +100,19 @@ def build_progress_bar(progress, width=10):
     """构建进度条文本"""
     filled = int(width * progress / 100)
     empty = width - filled
-    return "█" * filled + "░" * empty
+    return "▓" * filled + "░" * empty
 
 
-def build_dingtalk_message(todos, base_url="https://dingtalk-reminder.onrender.com"):
-    """构建钉钉消息（Markdown格式，支持点击链接标记完成）"""
+def build_dingtalk_message(todos, group_id, base_url):
+    """构建钉钉消息"""
+    webhook = get_webhook(group_id)
+
     if not todos:
         return {
             "msgtype": "markdown",
             "markdown": {
-                "title": "汽二待办备忘录",
-                "text": "## 📋 汽二待办备忘录\n\n暂无待办事项！"
+                "title": f"群{group_id}待办备忘录",
+                "text": f"## 📋 群{group_id}待办备忘录\n\n暂无待办事项！"
             }
         }
 
@@ -111,7 +120,7 @@ def build_dingtalk_message(todos, base_url="https://dingtalk-reminder.onrender.c
     priority_order = {"high": 0, "important": 1, "normal": 2}
     undone.sort(key=lambda x: (priority_order.get(x.get("priority", "normal"), 2), x.get("deadline", "")))
 
-    content = "## 📋 汽二待办备忘录\n\n"
+    content = f"## 📋 群{group_id}待办备忘录\n\n"
 
     # 截止日期提醒
     urgent_items = [t for t in undone if get_deadline_status(t.get("deadline", "")) in ["overdue", "today", "tomorrow", "soon"]]
@@ -130,7 +139,7 @@ def build_dingtalk_message(todos, base_url="https://dingtalk-reminder.onrender.c
                 content += f"- ⚠️ **{deadline} 截止：** {t['content']}\n"
         content += "\n"
 
-    # 待办事项（带进度和可点击负责人）
+    # 待办事项
     if undone:
         content += "### 📌 待办事项\n"
         for t in undone:
@@ -144,25 +153,21 @@ def build_dingtalk_message(todos, base_url="https://dingtalk-reminder.onrender.c
             priority_icon = {"high": "🚨", "important": "📌", "normal": "📝"}.get(priority, "📝")
             priority_tag = {"high": "**[紧急]**", "important": "**[重要]**", "normal": ""}.get(priority, "")
 
-            # 构建待办项标题
             if priority_tag:
                 content += f"- {priority_icon} {priority_tag} {deadline} {t['content']}\n"
             else:
                 content += f"- {priority_icon} {deadline} {t['content']}\n"
 
-            # 添加进度条
             if members:
                 done_count = sum(1 for m in members if m.get("done", False))
                 total_count = len(members)
                 content += f"    - 进度：**{progress}%** ▓▓▓▓▓▓░░░░ ({done_count}/{total_count}完成)\n"
-
-                # 添加可点击的负责人列表
                 content += "    - 👥 负责人："
                 member_links = []
                 for i, member in enumerate(members):
-                    member_url = f"{base_url}/member/{todo_id}/{i}"
+                    member_url = f"{base_url}/g/{group_id}/member/{todo_id}/{i}"
                     if member.get("done", False):
-                        member_links.append(f"`☑️ {member['name']}`")
+                        member_links.append(f"`☑ {member['name']}`")
                     else:
                         member_links.append(f"[**☐ {member['name']}**]({member_url})")
                 content += " ".join(member_links) + "\n"
@@ -172,42 +177,26 @@ def build_dingtalk_message(todos, base_url="https://dingtalk-reminder.onrender.c
     return {
         "msgtype": "markdown",
         "markdown": {
-            "title": "汽二待办备忘录",
+            "title": f"群{group_id}待办备忘录",
             "text": content
         }
     }
 
 
-def send_to_dingtalk(message):
-    """发送消息到钉钉（支持多群）"""
-    if not DINGTALK_WEBHOOK:
-        return False, "钉钉 Webhook 未配置"
+def send_to_dingtalk(group_id, message):
+    """发送消息到钉钉"""
+    webhook = get_webhook(group_id)
+    if not webhook:
+        return False, f"群{group_id}的钉钉 Webhook 未配置"
 
-    # 支持多个 Webhook，用逗号分隔
-    webhooks = [w.strip() for w in DINGTALK_WEBHOOK.split(",") if w.strip()]
-    if not webhooks:
-        return False, "钉钉 Webhook 未配置"
-
-    success_count = 0
-    fail_messages = []
-
-    for webhook in webhooks:
-        try:
-            response = requests.post(webhook, json=message, timeout=10)
-            result = response.json()
-            if result.get("errcode") == 0:
-                success_count += 1
-            else:
-                fail_messages.append(f"{webhook[:30]}...: {result.get('errmsg', '未知错误')}")
-        except Exception as e:
-            fail_messages.append(f"{webhook[:30]}...: {str(e)}")
-
-    if success_count == len(webhooks):
-        return True, f"已推送到 {success_count} 个群"
-    elif success_count > 0:
-        return True, f"成功 {success_count} 个群，失败 {len(webhooks) - success_count} 个群"
-    else:
-        return False, "发送失败：" + "; ".join(fail_messages[:3])
+    try:
+        response = requests.post(webhook, json=message, timeout=10)
+        result = response.json()
+        if result.get("errcode") == 0:
+            return True, f"已推送到群{group_id}"
+        return False, f"发送失败：{result.get('errmsg', '未知错误')}"
+    except Exception as e:
+        return False, f"请求异常：{str(e)}"
 
 
 # HTML 模板
@@ -217,12 +206,17 @@ HTML_TEMPLATE = '''
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>待办备忘录</title>
+    <title>群{{ group_id }}待办备忘录</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; padding: 20px; }
         .container { max-width: 800px; margin: 0 auto; }
         h1 { text-align: center; color: #333; margin-bottom: 20px; }
+        .group-nav { display: flex; gap: 10px; justify-content: center; margin-bottom: 20px; }
+        .group-btn { padding: 8px 20px; background: white; color: #667eea; border: 2px solid #667eea; border-radius: 20px; text-decoration: none; font-size: 14px; }
+        .group-btn.active { background: #667eea; color: white; }
+        .group-btn:hover { background: #f0f5ff; }
+        .group-btn.active:hover { background: #5a6fd6; }
         .card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
         .section-title { font-size: 14px; color: #666; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #eee; }
         .todo-item { padding: 15px 0; border-bottom: 1px solid #f5f5f5; }
@@ -286,14 +280,20 @@ HTML_TEMPLATE = '''
 </head>
 <body>
     <div class="container">
-        <h1>📋 待办备忘录</h1>
+        <h1>📋 群{{ group_id }}待办备忘录</h1>
+
+        <div class="group-nav">
+            <a href="/group/1" class="group-btn {{ 'active' if group_id == 1 else '' }}">群1</a>
+            <a href="/group/2" class="group-btn {{ 'active' if group_id == 2 else '' }}">群2</a>
+            <a href="/group/3" class="group-btn {{ 'active' if group_id == 3 else '' }}">群3</a>
+        </div>
 
         {% if message %}
         <div class="message {{ message_type }}">{{ message }}</div>
         {% endif %}
 
         <div class="card form-card">
-            <form action="/add" method="get">
+            <form action="/group/{{ group_id }}/add" method="get">
                 <div class="form-row">
                     <span class="form-label">待办内容</span>
                     <input type="text" name="content" placeholder="输入待办内容" required style="flex:1;padding:10px;border:none;border-radius:6px;font-size:14px;">
@@ -348,7 +348,7 @@ HTML_TEMPLATE = '''
             {% for todo in undone_todos %}
             <div class="todo-item">
                 <div class="todo-header">
-                    <input type="checkbox" class="todo-checkbox" onchange="location.href='/done/{{ todo.id }}'">
+                    <input type="checkbox" class="todo-checkbox" onchange="location.href='/group/{{ group_id }}/done/{{ todo.id }}'">
                     <span class="priority-tag priority-{{ todo.priority }}">{{ {"high": "🚨 紧急", "important": "📌 重要", "normal": "📝 普通"}[todo.priority] }}</span>
                     <span class="todo-content">{{ todo.content }}</span>
                     {% if todo.deadline %}
@@ -366,7 +366,7 @@ HTML_TEMPLATE = '''
                     </div>
                     <div class="member-list">
                         {% for member in todo.members %}
-                        <span class="member-chip {{ 'done' if member.done else 'undone' }}" onclick="location.href='/member/{{ todo.id }}/{{ loop.index0 }}'">
+                        <span class="member-chip {{ 'done' if member.done else 'undone' }}" onclick="location.href='/group/{{ group_id }}/member/{{ todo.id }}/{{ loop.index0 }}'">
                             <span class="member-check">{{ '☑' if member.done else '☐' }}</span>
                             {{ member.name }}
                         </span>
@@ -376,8 +376,8 @@ HTML_TEMPLATE = '''
                 {% endif %}
 
                 <div class="todo-actions">
-                    <a href="/edit/{{ todo.id }}" class="btn-small" style="background:#1890ff;color:white;text-decoration:none;padding:4px 10px;border-radius:4px;font-size:12px;">编辑</a>
-                    <a href="/delete/{{ todo.id }}" class="btn-small btn-delete" onclick="return confirm('确定删除？')">删除</a>
+                    <a href="/group/{{ group_id }}/edit/{{ todo.id }}" class="btn-small" style="background:#1890ff;color:white;text-decoration:none;padding:4px 10px;border-radius:4px;font-size:12px;">编辑</a>
+                    <a href="/group/{{ group_id }}/delete/{{ todo.id }}" class="btn-small btn-delete" onclick="return confirm('确定删除？')">删除</a>
                 </div>
             </div>
             {% endfor %}
@@ -390,11 +390,11 @@ HTML_TEMPLATE = '''
             {% for todo in done_todos %}
             <div class="todo-item" style="opacity: 0.6;">
                 <div class="todo-header">
-                    <input type="checkbox" class="todo-checkbox" checked onchange="location.href='/undone/{{ todo.id }}'">
+                    <input type="checkbox" class="todo-checkbox" checked onchange="location.href='/group/{{ group_id }}/undone/{{ todo.id }}'">
                     <span class="todo-content" style="text-decoration: line-through;">{{ todo.content }}</span>
                 </div>
                 <div class="todo-actions">
-                    <a href="/delete/{{ todo.id }}" class="btn-small btn-delete" onclick="return confirm('确定删除？')">删除</a>
+                    <a href="/group/{{ group_id }}/delete/{{ todo.id }}" class="btn-small btn-delete" onclick="return confirm('确定删除？')">删除</a>
                 </div>
             </div>
             {% endfor %}
@@ -408,8 +408,8 @@ HTML_TEMPLATE = '''
         {% endif %}
 
         <div class="actions">
-            <a href="/send" class="btn btn-send">📤 推送到钉钉群</a>
-            <a href="/clear" class="btn btn-danger" onclick="return confirm('确定清空所有待办？')">🗑️ 清空</a>
+            <a href="/group/{{ group_id }}/send" class="btn btn-send">📤 推送到钉钉群</a>
+            <a href="/group/{{ group_id }}/clear" class="btn btn-danger" onclick="return confirm('确定清空所有待办？')">🗑️ 清空</a>
         </div>
     </div>
 </body>
@@ -419,10 +419,19 @@ HTML_TEMPLATE = '''
 
 @app.route("/")
 def index():
-    """首页"""
+    """首页重定向到群1"""
+    return redirect("/group/1")
+
+
+@app.route("/group/<int:group_id>")
+def group_index(group_id):
+    """某群的首页"""
+    if group_id > 5 or group_id < 1:
+        return redirect("/group/1")
+
     message = request.args.get("message", "")
     message_type = request.args.get("type", "")
-    todos = read_todos()
+    todos = read_todos(group_id)
 
     for t in todos:
         t["deadline_str"] = t.get("deadline", "")
@@ -442,6 +451,7 @@ def index():
 
     return render_template_string(
         HTML_TEMPLATE,
+        group_id=group_id,
         todos=todos,
         undone_todos=undone_todos,
         done_todos=done_todos,
@@ -451,8 +461,8 @@ def index():
     )
 
 
-@app.route("/add")
-def add_todo():
+@app.route("/group/<int:group_id>/add")
+def add_todo(group_id):
     """添加待办"""
     content = request.args.get("content", "").strip()
     deadline = request.args.get("deadline", "").strip()
@@ -460,17 +470,16 @@ def add_todo():
     members_str = request.args.get("members", "").strip()
 
     if not content:
-        return redirect("/?message=内容不能为空&type=error")
+        return redirect(f"/group/{group_id}/?message=内容不能为空&type=error")
 
     members = []
     if members_str:
-        # 支持中文逗号和英文逗号分隔
         for name in re.split(r"[,，]", members_str):
             name = name.strip()
             if name:
                 members.append({"name": name, "done": False})
 
-    todos = read_todos()
+    todos = read_todos(group_id)
     todos.append({
         "id": get_next_id(todos),
         "content": content,
@@ -479,39 +488,39 @@ def add_todo():
         "done": False,
         "members": members
     })
-    write_todos(todos)
+    write_todos(group_id, todos)
 
-    return redirect("/?message=已添加：{}&type=success".format(content))
+    return redirect(f"/group/{group_id}/?message=已添加：{content}&type=success")
 
 
-@app.route("/done/<int:todo_id>")
-def done_todo(todo_id):
+@app.route("/group/<int:group_id>/done/<int:todo_id>")
+def done_todo(group_id, todo_id):
     """标记完成"""
-    todos = read_todos()
+    todos = read_todos(group_id)
     for t in todos:
         if t["id"] == todo_id:
             t["done"] = True
-            write_todos(todos)
-            return redirect("/?message=已标记完成：{}&type=success".format(t["content"]))
-    return redirect("/?message=未找到该待办&type=error")
+            write_todos(group_id, todos)
+            return redirect(f"/group/{group_id}/?message=已标记完成：{t['content']}&type=success")
+    return redirect(f"/group/{group_id}/?message=未找到该待办&type=error")
 
 
-@app.route("/undone/<int:todo_id>")
-def undone_todo(todo_id):
+@app.route("/group/<int:group_id>/undone/<int:todo_id>")
+def undone_todo(group_id, todo_id):
     """取消完成"""
-    todos = read_todos()
+    todos = read_todos(group_id)
     for t in todos:
         if t["id"] == todo_id:
             t["done"] = False
-            write_todos(todos)
-            return redirect("/?message=已取消完成：{}&type=success".format(t["content"]))
-    return redirect("/?message=未找到该待办&type=error")
+            write_todos(group_id, todos)
+            return redirect(f"/group/{group_id}/?message=已取消完成：{t['content']}&type=success")
+    return redirect(f"/group/{group_id}/?message=未找到该待办&type=error")
 
 
-@app.route("/member/<int:todo_id>/<int:member_index>")
-def member_page(todo_id, member_index):
-    """成员确认页面（防止误触）"""
-    todos = read_todos()
+@app.route("/group/<int:group_id>/member/<int:todo_id>/<int:member_index>")
+def member_page(group_id, todo_id, member_index):
+    """成员确认页面"""
+    todos = read_todos(group_id)
 
     for t in todos:
         if t["id"] == todo_id:
@@ -519,11 +528,9 @@ def member_page(todo_id, member_index):
             if 0 <= member_index < len(members):
                 member = members[member_index]
 
-                # 如果已经完成，显示提示
                 if member.get("done", False):
-                    return redirect("/?message={} 已经完成了，无需重复操作&type=error".format(member["name"]))
+                    return redirect(f"/group/{group_id}/?message={member['name']} 已经完成了，无需重复操作&type=error")
 
-                # 显示确认页面
                 html = '''
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -553,8 +560,8 @@ def member_page(todo_id, member_index):
             <div class="task-name">''' + t["content"] + '''</div>
             <p>确认由 <span class="member-name">''' + member["name"] + '''</span> 完成？</p>
             <div style="margin-top: 30px;">
-                <a href="/member/confirm/''' + str(todo_id) + '''/''' + str(member_index) + '''" class="btn">确认完成</a>
-                <a href="/" class="btn btn-cancel">取消</a>
+                <a href="/group/''' + str(group_id) + '''/member/confirm/''' + str(todo_id) + '''/''' + str(member_index) + '''" class="btn">确认完成</a>
+                <a href="/group/''' + str(group_id) + '''" class="btn btn-cancel">取消</a>
             </div>
             <p class="warning">* 确认后无法撤销，请谨慎操作</p>
         </div>
@@ -564,13 +571,13 @@ def member_page(todo_id, member_index):
 '''
                 return html
 
-    return redirect("/?message=未找到该成员&type=error")
+    return redirect(f"/group/{group_id}/?message=未找到该成员&type=error")
 
 
-@app.route("/member/confirm/<int:todo_id>/<int:member_index>")
-def confirm_member(todo_id, member_index):
+@app.route("/group/<int:group_id>/member/confirm/<int:todo_id>/<int:member_index>")
+def confirm_member(group_id, todo_id, member_index):
     """确认标记成员完成"""
-    todos = read_todos()
+    todos = read_todos(group_id)
 
     for t in todos:
         if t["id"] == todo_id:
@@ -578,63 +585,31 @@ def confirm_member(todo_id, member_index):
             if 0 <= member_index < len(members):
                 member = members[member_index]
 
-                # 如果已经完成，不允许重复操作
                 if member.get("done", False):
-                    return redirect("/?message={} 已经完成了&type=error".format(member["name"]))
+                    return redirect(f"/group/{group_id}/?message={member['name']} 已经完成了&type=error")
 
-                # 标记完成
                 members[member_index]["done"] = True
-                write_todos(todos)
+                write_todos(group_id, todos)
                 name = member["name"]
 
-                # 检查是否全员完成
                 all_done = all(m.get("done", False) for m in members)
                 if all_done:
                     t["done"] = True
-                    write_todos(todos)
-                    message = build_dingtalk_message(todos)
-                    send_to_dingtalk(message)
-                    return redirect("/?message={}：已完成！全员完成，已推送钉钉群！&type=success".format(name))
+                    write_todos(group_id, todos)
+                    base_url = request.host_url.rstrip("/")
+                    message = build_dingtalk_message(todos, group_id, base_url)
+                    send_to_dingtalk(group_id, message)
+                    return redirect(f"/group/{group_id}/?message={name}：已完成！全员完成，已推送钉钉群！&type=success")
 
-                return redirect("/?message={}：已完成&type=success".format(name))
+                return redirect(f"/group/{group_id}/?message={name}：已完成&type=success")
 
-    return redirect("/?message=未找到该成员&type=error")
-
-
-@app.route("/delete/<int:todo_id>")
-def delete_todo(todo_id):
-    """删除待办"""
-    todos = read_todos()
-    for i, t in enumerate(todos):
-        if t["id"] == todo_id:
-            deleted = todos.pop(i)
-            write_todos(todos)
-            return redirect("/?message=已删除：{}&type=success".format(deleted["content"]))
-    return redirect("/?message=未找到该待办&type=error")
+    return redirect(f"/group/{group_id}/?message=未找到该成员&type=error")
 
 
-@app.route("/clear")
-def clear_todo():
-    """清空待办"""
-    write_todos([])
-    return redirect("/?message=已清空所有待办&type=success")
-
-
-@app.route("/send")
-def send():
-    """推送待办到钉钉群"""
-    todos = read_todos()
-    message = build_dingtalk_message(todos)
-    success, msg = send_to_dingtalk(message)
-    if success:
-        return jsonify({"code": 0, "message": msg})
-    return jsonify({"code": -1, "message": msg}), 400
-
-
-@app.route("/edit/<int:todo_id>")
-def edit_todo(todo_id):
+@app.route("/group/<int:group_id>/edit/<int:todo_id>")
+def edit_todo(group_id, todo_id):
     """编辑待办页面"""
-    todos = read_todos()
+    todos = read_todos(group_id)
     todo = None
     for t in todos:
         if t["id"] == todo_id:
@@ -642,9 +617,8 @@ def edit_todo(todo_id):
             break
 
     if not todo:
-        return redirect("/?message=未找到该待办&type=error")
+        return redirect(f"/group/{group_id}/?message=未找到该待办&type=error")
 
-    # 构建编辑表单页面
     members_str = ",".join([m["name"] for m in todo.get("members", [])])
 
     html = '''
@@ -674,7 +648,7 @@ def edit_todo(todo_id):
     <div class="container">
         <h1>✏️ 编辑待办</h1>
         <div class="card">
-            <form action="/update/''' + str(todo_id) + '''" method="post">
+            <form action="/group/''' + str(group_id) + '''/update/''' + str(todo_id) + '''" method="post">
                 <div class="form-group">
                     <label>待办内容</label>
                     <input type="text" name="content" value="''' + todo["content"] + '''" required>
@@ -697,8 +671,8 @@ def edit_todo(todo_id):
                 </div>
                 <div style="margin-top: 20px;">
                     <button type="submit" class="btn">保存修改</button>
-                    <a href="/" class="btn btn-cancel">取消</a>
-                    <a href="/delete/''' + str(todo_id) + '''" class="btn btn-delete" style="float:right;" onclick="return confirm('确定删除？')">删除</a>
+                    <a href="/group/''' + str(group_id) + '''" class="btn btn-cancel">取消</a>
+                    <a href="/group/''' + str(group_id) + '''/delete/''' + str(todo_id) + '''" class="btn btn-delete" style="float:right;" onclick="return confirm('确定删除？')">删除</a>
                 </div>
             </form>
         </div>
@@ -709,8 +683,8 @@ def edit_todo(todo_id):
     return html
 
 
-@app.route("/update/<int:todo_id>", methods=["POST"])
-def update_todo(todo_id):
+@app.route("/group/<int:group_id>/update/<int:todo_id>", methods=["POST"])
+def update_todo(group_id, todo_id):
     """更新待办"""
     content = request.form.get("content", "").strip()
     deadline = request.form.get("deadline", "").strip()
@@ -718,22 +692,20 @@ def update_todo(todo_id):
     members_str = request.form.get("members", "").strip()
 
     if not content:
-        return redirect("/?message=内容不能为空&type=error")
+        return redirect(f"/group/{group_id}/?message=内容不能为空&type=error")
 
-    todos = read_todos()
+    todos = read_todos(group_id)
     for t in todos:
         if t["id"] == todo_id:
             t["content"] = content
             t["deadline"] = deadline
             t["priority"] = priority
 
-            # 更新负责人
             members = []
             if members_str:
                 for name in re.split(r"[,，]", members_str):
                     name = name.strip()
                     if name:
-                        # 保留原有完成状态
                         old_done = False
                         for old_m in t.get("members", []):
                             if old_m["name"] == name:
@@ -742,10 +714,41 @@ def update_todo(todo_id):
                         members.append({"name": name, "done": old_done})
             t["members"] = members
 
-            write_todos(todos)
-            return redirect("/?message=已更新：{}&type=success".format(content))
+            write_todos(group_id, todos)
+            return redirect(f"/group/{group_id}/?message=已更新：{content}&type=success")
 
-    return redirect("/?message=未找到该待办&type=error")
+    return redirect(f"/group/{group_id}/?message=未找到该待办&type=error")
+
+
+@app.route("/group/<int:group_id>/delete/<int:todo_id>")
+def delete_todo(group_id, todo_id):
+    """删除待办"""
+    todos = read_todos(group_id)
+    for i, t in enumerate(todos):
+        if t["id"] == todo_id:
+            deleted = todos.pop(i)
+            write_todos(group_id, todos)
+            return redirect(f"/group/{group_id}/?message=已删除：{deleted['content']}&type=success")
+    return redirect(f"/group/{group_id}/?message=未找到该待办&type=error")
+
+
+@app.route("/group/<int:group_id>/clear")
+def clear_todo(group_id):
+    """清空待办"""
+    write_todos(group_id, [])
+    return redirect(f"/group/{group_id}/?message=已清空所有待办&type=success")
+
+
+@app.route("/group/<int:group_id>/send")
+def send(group_id):
+    """推送待办到钉钉群"""
+    todos = read_todos(group_id)
+    base_url = request.host_url.rstrip("/")
+    message = build_dingtalk_message(todos, group_id, base_url)
+    success, msg = send_to_dingtalk(group_id, message)
+    if success:
+        return jsonify({"code": 0, "message": msg})
+    return jsonify({"code": -1, "message": msg}), 400
 
 
 if __name__ == "__main__":
