@@ -43,10 +43,10 @@ def build_dingtalk_message(todo_list):
     if not todo_list:
         return {
             "msgtype": "text",
-            "text": {"content": "📋 待办备忘录：\n暂无待办事项！"}
+            "text": {"content": "📋 汽二待办备忘录：\n暂无待办事项！"}
         }
 
-    content = "📋 待办备忘录\n\n"
+    content = "📋 汽二待办备忘录\n\n"
     for i, item in enumerate(todo_list, 1):
         content += f"{i}. {item}\n"
 
