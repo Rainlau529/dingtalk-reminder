@@ -177,13 +177,19 @@ def send_to_dingtalk(message):
     if not DINGTALK_WEBHOOK:
         return False, "钉钉 Webhook 未配置"
 
+    print(f"[DEBUG] Webhook URL: {DINGTALK_WEBHOOK[:50]}...")
+    print(f"[DEBUG] Message type: {message.get('msgtype')}")
+
     try:
         response = requests.post(DINGTALK_WEBHOOK, json=message, timeout=10)
+        print(f"[DEBUG] Response status: {response.status_code}")
+        print(f"[DEBUG] Response body: {response.text}")
         result = response.json()
         if result.get("errcode") == 0:
             return True, "发送成功"
         return False, f"发送失败：{result.get('errmsg', '未知错误')}"
     except Exception as e:
+        print(f"[DEBUG] Exception: {str(e)}")
         return False, f"请求异常：{str(e)}"
 
 
