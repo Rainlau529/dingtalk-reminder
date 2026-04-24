@@ -8,7 +8,7 @@
    - https://你的应用.onrender.com/send       # 推送到钉钉
 """
 
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, redirect
 import os
 import requests
 
@@ -193,26 +193,24 @@ def delete_todo():
     """删除单个待办"""
     index_str = request.args.get("index", "")
     try:
-        index = int(index_str)
+        idx = int(index_str)
     except:
-        index = -1
+        idx = -1
 
     todo_list = read_todo_list()
-    if 0 <= index < len(todo_list):
-        deleted = todo_list.pop(index)
+    if 0 <= idx < len(todo_list):
+        deleted = todo_list.pop(idx)
         write_todo_list(todo_list)
-        message = f"已删除：{deleted}"
+        return redirect("/?message=已删除：{}&type=success".format(deleted))
     else:
-        message = "删除失败：索引无效"
-
-    return index()
+        return redirect("/?message=删除失败：索引无效&type=error")
 
 
 @app.route("/clear")
 def clear_todo():
     """清空待办列表"""
     write_todo_list([])
-    return index()
+    return redirect("/?message=已清空所有待办&type=success")
 
 
 @app.route("/list")
