@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-钉钉待办备忘录
+钉钉汽二待办备忘录
 功能：标记完成、优先级、截止日期提醒、负责人进度追踪
 """
 
@@ -100,8 +100,8 @@ def build_dingtalk_message(todos):
         return {
             "msgtype": "markdown",
             "markdown": {
-                "title": "待办备忘录",
-                "text": "## 📋 待办备忘录\n\n暂无待办事项！"
+                "title": "汽二待办备忘录",
+                "text": "## 📋 汽二待办备忘录\n\n暂无待办事项！"
             }
         }
 
@@ -109,7 +109,7 @@ def build_dingtalk_message(todos):
     priority_order = {"high": 0, "important": 1, "normal": 2}
     undone.sort(key=lambda x: (priority_order.get(x.get("priority", "normal"), 2), x.get("deadline", "")))
 
-    content = "## 📋 待办备忘录\n\n"
+    content = "## 📋 汽二待办备忘录\n\n"
 
     # 截止日期提醒
     urgent_items = [t for t in undone if get_deadline_status(t.get("deadline", "")) in ["overdue", "today", "tomorrow", "soon"]]
@@ -166,7 +166,7 @@ def build_dingtalk_message(todos):
     return {
         "msgtype": "markdown",
         "markdown": {
-            "title": "待办备忘录",
+            "title": "汽二待办备忘录",
             "text": content
         }
     }
@@ -177,19 +177,13 @@ def send_to_dingtalk(message):
     if not DINGTALK_WEBHOOK:
         return False, "钉钉 Webhook 未配置"
 
-    print(f"[DEBUG] Webhook URL: {DINGTALK_WEBHOOK[:50]}...")
-    print(f"[DEBUG] Message type: {message.get('msgtype')}")
-
     try:
         response = requests.post(DINGTALK_WEBHOOK, json=message, timeout=10)
-        print(f"[DEBUG] Response status: {response.status_code}")
-        print(f"[DEBUG] Response body: {response.text}")
         result = response.json()
         if result.get("errcode") == 0:
             return True, "发送成功"
         return False, f"发送失败：{result.get('errmsg', '未知错误')}"
     except Exception as e:
-        print(f"[DEBUG] Exception: {str(e)}")
         return False, f"请求异常：{str(e)}"
 
 
@@ -200,7 +194,7 @@ HTML_TEMPLATE = '''
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>待办备忘录</title>
+    <title>汽二待办备忘录</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; padding: 20px; }
@@ -269,7 +263,7 @@ HTML_TEMPLATE = '''
 </head>
 <body>
     <div class="container">
-        <h1>📋 待办备忘录</h1>
+        <h1>📋 汽二待办备忘录</h1>
 
         {% if message %}
         <div class="message {{ message_type }}">{{ message }}</div>
