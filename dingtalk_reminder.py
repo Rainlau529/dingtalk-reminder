@@ -365,6 +365,7 @@ HTML_TEMPLATE = '''
                 {% endif %}
 
                 <div class="todo-actions">
+                    <a href="/edit/{{ todo.id }}" class="btn-small" style="background:#1890ff;color:white;text-decoration:none;padding:4px 10px;border-radius:4px;font-size:12px;">编辑</a>
                     <a href="/delete/{{ todo.id }}" class="btn-small btn-delete" onclick="return confirm('确定删除？')">删除</a>
                 </div>
             </div>
@@ -539,6 +540,123 @@ def send():
     if success:
         return jsonify({"code": 0, "message": msg})
     return jsonify({"code": -1, "message": msg}), 400
+
+
+@app.route("/edit/<int:todo_id>")
+def edit_todo(todo_id):
+    """编辑待办页面"""
+    todos = read_todos()
+    todo = None
+    for t in todos:
+        if t["id"] == todo_id:
+            todo = t
+            break
+
+    if not todo:
+        return redirect("/?message=未找到该待办&type=error")
+
+    # 构建编辑表单页面
+    members_str = ",".join([m["name"] for m in todo.get("members", [])])
+
+    html = '''
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>编辑待办</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; }
+        h1 { text-align: center; color: #333; margin-bottom: 20px; }
+        .card { background: white; border-radius: 12px; padding: 25px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; font-size: 14px; color: #666; margin-bottom: 5px; }
+        .form-group input, .form-group select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+        .btn { display: inline-block; padding: 12px 24px; background: #667eea; color: white; text-decoration: none; border-radius: 6px; border: none; cursor: pointer; font-size: 14px; }
+        .btn:hover { background: #5a6fd6; }
+        .btn-cancel { background: #999; margin-left: 10px; }
+        .btn-cancel:hover { background: #888; }
+        .btn-delete { background: #ff4d4f; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>✏️ 编辑待办</h1>
+        <div class="card">
+            <form action="/update/''' + str(todo_id) + '''" method="post">
+                <div class="form-group">
+                    <label>待办内容</label>
+                    <input type="text" name="content" value="''' + todo["content"] + '''" required>
+                </div>
+                <div class="form-group">
+                    <label>截止日期</label>
+                    <input type="text" name="deadline" value="''' + (todo.get("deadline") or "") + '''" placeholder="如：4月25日">
+                </div>
+                <div class="form-group">
+                    <label>优先级</label>
+                    <select name="priority">
+                        <option value="normal" ''' + ("selected" if todo.get("priority") == "normal" else "") + '''>📝 普通</option>
+                        <option value="important" ''' + ("selected" if todo.get("priority") == "important" else "") + '''>📌 重要</option>
+                        <option value="high" ''' + ("selected" if todo.get("priority") == "high" else "") + '''>🚨 紧急</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>负责人（多人用逗号分隔）</label>
+                    <input type="text" name="members" value="''' + members_str + '''" placeholder="张三,李四,王五">
+                </div>
+                <div style="margin-top: 20px;">
+                    <button type="submit" class="btn">保存修改</button>
+                    <a href="/" class="btn btn-cancel">取消</a>
+                    <a href="/delete/''' + str(todo_id) + '''" class="btn btn-delete" style="float:right;" onclick="return confirm('确定删除？')">删除</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
+'''
+    return html
+
+
+@app.route("/update/<int:todo_id>", methods=["POST"])
+def update_todo(todo_id):
+    """更新待办"""
+    content = request.form.get("content", "").strip()
+    deadline = request.form.get("deadline", "").strip()
+    priority = request.form.get("priority", "normal")
+    members_str = request.form.get("members", "").strip()
+
+    if not content:
+        return redirect("/?message=内容不能为空&type=error")
+
+    todos = read_todos()
+    for t in todos:
+        if t["id"] == todo_id:
+            t["content"] = content
+            t["deadline"] = deadline
+            t["priority"] = priority
+
+            # 更新负责人
+            members = []
+            if members_str:
+                for name in members_str.split(","):
+                    name = name.strip()
+                    if name:
+                        # 保留原有完成状态
+                        old_done = False
+                        for old_m in t.get("members", []):
+                            if old_m["name"] == name:
+                                old_done = old_m.get("done", False)
+                                break
+                        members.append({"name": name, "done": old_done})
+            t["members"] = members
+
+            write_todos(todos)
+            return redirect("/?message=已更新：{}&type=success".format(content))
+
+    return redirect("/?message=未找到该待办&type=error")
 
 
 if __name__ == "__main__":
